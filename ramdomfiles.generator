@@ -1,0 +1,24 @@
+BASE="/hpcdata/projects/datamigration/old_lustre"
+
+mkdir -p "$BASE"
+
+for d in $(seq 1 120); do
+    mkdir -p "$BASE/project_$d"
+    for s in $(seq 1 $((RANDOM % 5 + 3))); do
+        mkdir -p "$BASE/project_$d/subdir_$s"
+    done
+done
+
+remaining=120000   # MB
+
+while [ $remaining -gt 0 ]; do
+    dir=$(find "$BASE" -type d | shuf -n 1)
+    size=$((RANDOM % 400 + 100))    # Random file size: 100–499 MB
+
+    if [ $size -gt $remaining ]; then
+        size=$remaining
+    fi
+
+    fallocate -l "${size}M" "$dir/file_$(date +%s%N)_$RANDOM.dat"
+    remaining=$((remaining - size))
+done
