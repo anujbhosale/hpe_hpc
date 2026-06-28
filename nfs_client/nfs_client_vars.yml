@@ -1,0 +1,32 @@
+---
+# Default NFS client configuration variables
+
+# NFS Server configuration
+nfs_server_host: "192.168.1.100"
+nfs_export_path: "/export/data"
+
+# Local mount configuration
+nfs_mount_point: "/mnt/nfs"
+nfs_mount_uid: 1000
+nfs_mount_gid: 1000
+
+# NFS mount options
+# Common options:
+# - rw: read-write
+# - ro: read-only
+# - sync: synchronous I/O
+# - async: asynchronous I/O (faster but less safe)
+# - hard: hard mount (retry indefinitely)
+# - soft: soft mount (retry limited times)
+# - intr: allow interruption of NFS calls
+# - nolock: disable file locking
+nfs_mount_options: "rw,sync,hard,intr"
+
+# Set to true to ensure NFS utilities are installed and running
+ensure_nfs_running: true
+
+# Retry timeout for mount operations
+mount_retry_timeout: 300
+
+# Enable firewall rules for NFS (if using firewalld)
+configure_firewall: false

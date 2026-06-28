@@ -1,0 +1,78 @@
+---
+- name: Install and configure NFS client
+  hosts: all
+  become: yes
+  vars:
+    nfs_server_host: "192.168.1.100"  # Change to your NFS server IP
+    nfs_export_path: "/export/data"    # NFS export path on server
+    nfs_mount_point: "/mnt/nfs"        # Local mount point
+    nfs_mount_options: "rw,sync,hard,intr"
+
+  tasks:
+    - name: Update package cache (Debian/Ubuntu)
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Install NFS client packages (Debian/Ubuntu)
+      apt:
+        name:
+          - nfs-common
+          - nfs-kernel-server
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install NFS client packages (RedHat/CentOS)
+      yum:
+        name:
+          - nfs-utils
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Install NFS client packages (Fedora)
+      dnf:
+        name:
+          - nfs-utils
+        state: present
+      when: ansible_os_family == "Fedora"
+
+    - name: Start and enable NFS services
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      with_items:
+        - rpcbind
+      when: ansible_os_family != "Fedora"
+
+    - name: Start and enable NFS services (Fedora)
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      with_items:
+        - rpcbind
+      when: ansible_os_family == "Fedora"
+
+    - name: Create mount point directory
+      file:
+        path: "{{ nfs_mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Mount NFS share
+      mount:
+        path: "{{ nfs_mount_point }}"
+        src: "{{ nfs_server_host }}:{{ nfs_export_path }}"
+        fstype: nfs
+        opts: "{{ nfs_mount_options }}"
+        state: mounted
+
+    - name: Verify NFS mount
+      command: "df -h {{ nfs_mount_point }}"
+      register: mount_result
+      changed_when: false
+
+    - name: Display mount information
+      debug:
+        msg: "{{ mount_result.stdout_lines }}"
