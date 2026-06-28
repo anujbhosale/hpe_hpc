@@ -1,0 +1,40 @@
+dn: cn=grp-hpcadmins,ou=Groups,dc=hpcindia,dc=io
+objectClass: top
+objectClass: posixGroup
+cn: grp-hpcadmins
+gidNumber: 10000
+
+dn: cn=grp-slurmusers,ou=Groups,dc=hpcindia,dc=io
+objectClass: posixGroup
+cn: grp-slurmusers
+gidNumber: 10001
+
+dn: cn=grp-pbsusers,ou=Groups,dc=hpcindia,dc=io
+objectClass: posixGroup
+cn: grp-pbsusers
+gidNumber: 10002
+
+dn: cn=grp-hpcmusers,ou=Groups,dc=hpcindia,dc=io
+objectClass: posixGroup
+cn: grp-hpcmusers
+gidNumber: 10003
+
+dn: cn=grp-bcmusers,ou=Groups,dc=hpcindia,dc=io
+objectClass: posixGroup
+cn: grp-bcmusers
+gidNumber: 10004
+
+dn: cn=grp-morpheususers,ou=Groups,dc=hpcindia,dc=io
+objectClass: posixGroup
+cn: grp-morpheususers
+gidNumber: 10005
+
+dn: cn=grp-dausers,ou=Groups,dc=hpcindia,dc=io
+objectClass: posixGroup
+cn: grp-dausers
+gidNumber: 10006
+
+dn: cn=grp-grafanausers,ou=Groups,dc=hpcindia,dc=io
+objectClass: posixGroup
+cn: grp-grafanausers
+gidNumber: 10007

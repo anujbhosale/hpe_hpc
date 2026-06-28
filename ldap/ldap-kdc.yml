@@ -1,0 +1,203 @@
+---
+- name: Deploy LDAP (389-DS) and Kerberos Server
+  hosts: ldap_servers
+  become: true
+  gather_facts: true
+
+  vars:
+    server_hostname: "gccvmesxadserver.hpcindia.io"
+    server_ip: "10.25.67.150"
+
+    ldap_instance: "hpcindia"
+    ldap_suffix: "dc=hpcindia,dc=io"
+    ldap_root_dn: "cn=Directory Manager"
+    ldap_root_password: "hpcindia!123"
+
+    kerberos_realm: "HPCINDIA.IO"
+    kerberos_admin_password: "hpcindia!123"
+
+  tasks:
+
+    - name: Set hostname
+      ansible.builtin.hostname:
+        name: "{{ server_hostname }}"
+
+    - name: Configure /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "{{ server_ip }} {{ server_hostname }} gccvmesxadserver"
+        state: present
+
+    - name: Install LDAP, Kerberos and SSSD packages
+      ansible.builtin.dnf:
+        name:
+          - 389-ds-base
+          - openldap
+          - openldap-clients
+          - krb5-server
+          - krb5-workstation
+          - sssd
+          - sssd-ldap
+          - oddjob
+          - oddjob-mkhomedir
+          - authselect
+        state: present
+        update_cache: true
+
+    - name: Verify dscreate exists
+      ansible.builtin.command: which dscreate
+      register: dscreate_check
+      changed_when: false
+
+    - name: Verify ldapsearch exists
+      ansible.builtin.command: which ldapsearch
+      register: ldapsearch_check
+      changed_when: false
+
+    - name: Verify kadmin.local exists
+      ansible.builtin.command: which kadmin.local
+      register: kadmin_check
+      changed_when: false
+
+    - name: Check if 389-DS instance already exists
+      ansible.builtin.stat:
+        path: "/etc/dirsrv/slapd-{{ ldap_instance }}"
+      register: ds_instance
+
+    - name: Create dscreate configuration
+      ansible.builtin.copy:
+        dest: /tmp/dscreate.inf
+        content: |
+          [general]
+          config_version = 2
+
+          [slapd]
+          instance_name = {{ ldap_instance }}
+          root_password = {{ ldap_root_password }}
+          port = 389
+          secure_port = 636
+          self_sign_cert = True
+
+          [backend-userroot]
+          suffix = {{ ldap_suffix }}
+      when: not ds_instance.stat.exists
+
+    - name: Create 389 Directory Server instance
+      ansible.builtin.command:
+        cmd: dscreate from-file /tmp/dscreate.inf
+      when: not ds_instance.stat.exists
+
+    - name: Enable and start LDAP service
+      ansible.builtin.systemd:
+        name: "dirsrv@{{ ldap_instance }}"
+        enabled: true
+        state: started
+
+    - name: Wait for LDAP service
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: Create LDAP structure LDIF
+      ansible.builtin.copy:
+        dest: /tmp/base.ldif
+        content: |
+          dn: ou=People,{{ ldap_suffix }}
+          objectClass: top
+          objectClass: organizationalUnit
+          ou: People
+
+          dn: ou=Groups,{{ ldap_suffix }}
+          objectClass: top
+          objectClass: organizationalUnit
+          ou: Groups
+
+    - name: Import LDAP structure
+      ansible.builtin.shell: |
+        ldapadd -x \
+        -D "{{ ldap_root_dn }}" \
+        -w "{{ ldap_root_password }}" \
+        -H ldap://localhost \
+        -f /tmp/base.ldif
+      ignore_errors: true
+
+    - name: Configure Kerberos client
+      ansible.builtin.copy:
+        dest: /etc/krb5.conf
+        content: |
+          [libdefaults]
+            default_realm = {{ kerberos_realm }}
+            dns_lookup_realm = false
+            dns_lookup_kdc = false
+
+          [realms]
+            {{ kerberos_realm }} = {
+              kdc = {{ server_hostname }}
+              admin_server = {{ server_hostname }}
+            }
+
+          [domain_realm]
+            .hpcindia.io = {{ kerberos_realm }}
+            hpcindia.io = {{ kerberos_realm }}
+
+    - name: Create Kerberos directory
+      ansible.builtin.file:
+        path: /var/kerberos/krb5kdc
+        state: directory
+        mode: "0755"
+
+    - name: Configure KDC
+      ansible.builtin.copy:
+        dest: /var/kerberos/krb5kdc/kdc.conf
+        content: |
+          [kdcdefaults]
+            kdc_ports = 88
+
+          [realms]
+            {{ kerberos_realm }} = {
+              acl_file = /var/kerberos/krb5kdc/kadm5.acl
+              admin_keytab = /var/kerberos/krb5kdc/kadm5.keytab
+              max_life = 24h
+              max_renewable_life = 7d
+            }
+
+    - name: Configure Kerberos ACL
+      ansible.builtin.copy:
+        dest: /var/kerberos/krb5kdc/kadm5.acl
+        content: |
+          */admin@{{ kerberos_realm }} *
+
+    - name: Check Kerberos database
+      ansible.builtin.stat:
+        path: /var/kerberos/krb5kdc/principal
+      register: krbdb
+
+    - name: Create Kerberos database
+      ansible.builtin.shell: |
+        printf "%s\n%s\n" "{{ kerberos_admin_password }}" "{{ kerberos_admin_password }}" | \
+        kdb5_util create -s -r {{ kerberos_realm }}
+      when: not krbdb.stat.exists
+
+    - name: Enable and start krb5kdc
+      ansible.builtin.systemd:
+        name: krb5kdc
+        enabled: true
+        state: started
+
+    - name: Enable and start kadmin
+      ansible.builtin.systemd:
+        name: kadmin
+        enabled: true
+        state: started
+
+    - name: Create Kerberos admin principal
+      ansible.builtin.shell: |
+        kadmin.local -q "addprinc -pw {{ kerberos_admin_password }} root/admin"
+      ignore_errors: true
+
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg:
+          - "Hostname: {{ server_hostname }}"
+          - "LDAP Instance: {{ ldap_instance }}"
+          - "LDAP Suffix: {{ ldap_suffix }}"
+          - "Kerberos Realm: {{ kerberos_realm }}"

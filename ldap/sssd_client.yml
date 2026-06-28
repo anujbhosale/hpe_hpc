@@ -1,0 +1,115 @@
+---
+- name: Configure LDAP + Kerberos SSSD Client
+  hosts: ldap_clients
+  become: true
+  gather_facts: true
+
+  vars:
+    ldap_server: "10.25.67.150"
+    ldap_base_dn: "dc=hpcindia,dc=io"
+    kerberos_realm: "HPCINDIA.IO"
+
+  tasks:
+
+  # ----------------------------
+  # INSTALL PACKAGES
+  # ----------------------------
+  - name: Install SSSD and auth packages
+    ansible.builtin.dnf:
+      name:
+        - sssd
+        - sssd-ldap
+        - sssd-krb5
+        - oddjob
+        - oddjob-mkhomedir
+        - authselect
+        - krb5-workstation
+        - openldap-clients
+      state: present
+
+  # ----------------------------
+  # CONFIGURE KRB5 CLIENT
+  # ----------------------------
+  - name: Configure krb5.conf
+    ansible.builtin.copy:
+      dest: /etc/krb5.conf
+      content: |
+        [libdefaults]
+          default_realm = {{ kerberos_realm }}
+          dns_lookup_realm = false
+          dns_lookup_kdc = false
+
+        [realms]
+          {{ kerberos_realm }} = {
+            kdc = {{ ldap_server }}
+            admin_server = {{ ldap_server }}
+          }
+
+        [domain_realm]
+          .hpcindia.io = {{ kerberos_realm }}
+          hpcindia.io = {{ kerberos_realm }}
+
+  # ----------------------------
+  # CONFIGURE SSSD
+  # ----------------------------
+  - name: Configure SSSD
+    ansible.builtin.copy:
+      dest: /etc/sssd/sssd.conf
+      mode: "0600"
+      content: |
+        [sssd]
+        services = nss, pam
+        config_file_version = 2
+        domains = default
+
+        [nss]
+        homedir_substring = /home
+
+        [pam]
+
+        [domain/default]
+        id_provider = ldap
+        auth_provider = krb5
+        chpass_provider = krb5
+
+        ldap_uri = ldap://{{ ldap_server }}
+        ldap_search_base = {{ ldap_base_dn }}
+
+        krb5_realm = {{ kerberos_realm }}
+        krb5_server = {{ ldap_server }}
+
+        cache_credentials = True
+        enumerate = True
+
+  # ----------------------------
+  # AUTHSELECT CONFIG
+  # ----------------------------
+  - name: Configure system authentication
+    ansible.builtin.command: authselect select sssd with-mkhomedir --force
+
+  # ----------------------------
+  # ENABLE SERVICES
+  # ----------------------------
+  - name: Enable oddjobd
+    ansible.builtin.systemd:
+      name: oddjobd
+      enabled: true
+      state: started
+
+  - name: Enable SSSD
+    ansible.builtin.systemd:
+      name: sssd
+      enabled: true
+      state: restarted
+
+  # ----------------------------
+  # VALIDATION
+  # ----------------------------
+  - name: Test LDAP user lookup
+    ansible.builtin.command: getent passwd testuser
+    register: test_user
+    changed_when: false
+
+  - name: Show user lookup result
+    ansible.builtin.debug:
+      var: test_user.stdout_lines

@@ -1,0 +1,417 @@
+#!/bin/bash
+
+LDAP_SERVER="ldap://localhost"
+BASE_DN="dc=hpcindia,dc=io"
+USER_OU="ou=People,$BASE_DN"
+GROUP_OU="ou=Groups,$BASE_DN"
+BIND_DN="cn=Directory Manager"
+
+read -s -p "LDAP Admin Password: " BIND_PW
+echo
+
+pause_screen() {
+echo
+read -rp "Press Enter to continue..."
+}
+
+show_users() {
+ldapsearch -LLL -x 
+-H "$LDAP_SERVER" 
+-D "$BIND_DN" 
+-w "$BIND_PW" 
+-b "$USER_OU" 
+"(uid=*)" uid uidNumber gidNumber |
+awk '
+/^uid:/ {u=$2}
+/^uidNumber:/ {uidn=$2}
+/^gidNumber:/ {
+printf "%-20s UID=%-8s GID=%-8s\n", u, uidn, $2
+}' | sort
+}
+
+show_groups() {
+ldapsearch -LLL -x 
+-H "$LDAP_SERVER" 
+-D "$BIND_DN" 
+-w "$BIND_PW" 
+-b "$GROUP_OU" 
+"(cn=*)" cn gidNumber |
+awk '
+/^cn:/ {g=$2}
+/^gidNumber:/ {
+printf "%-20s GID=%-8s\n", g, $2
+}' | sort
+}
+
+add_user() {
+
+```
+if ! command -v slappasswd >/dev/null 2>&1; then
+    echo
+    echo "ERROR: slappasswd not found."
+    echo "Install it using:"
+    echo "dnf install -y openldap-servers"
+    pause_screen
+    return
+fi
+
+echo
+echo "Existing Groups"
+echo "---------------"
+show_groups
+
+echo
+read -rp "Username: " USERNAME
+read -rp "UID Number: " UIDNUM
+read -rp "Primary GID Number: " GIDNUM
+read -rp "Full Name: " FULLNAME
+read -s -rp "Password: " PASSWORD
+echo
+
+HASHEDPW=$(slappasswd -s "$PASSWORD")
+
+cat >/tmp/adduser.ldif <<EOF
+```
+
+dn: uid=$USERNAME,$USER_OU
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+cn: $FULLNAME
+sn: $FULLNAME
+uid: $USERNAME
+uidNumber: $UIDNUM
+gidNumber: $GIDNUM
+homeDirectory: /home/$USERNAME
+loginShell: /bin/bash
+userPassword: $HASHEDPW
+EOF
+
+```
+ldapadd -x \
+  -H "$LDAP_SERVER" \
+  -D "$BIND_DN" \
+  -w "$BIND_PW" \
+  -f /tmp/adduser.ldif
+
+rm -f /tmp/adduser.ldif
+
+pause_screen
+```
+
+}
+
+delete_user() {
+
+```
+echo
+echo "Available Users"
+echo "---------------"
+show_users
+
+echo
+read -rp "Username to delete: " USERNAME
+
+ldapdelete -x \
+  -H "$LDAP_SERVER" \
+  -D "$BIND_DN" \
+  -w "$BIND_PW" \
+  "uid=$USERNAME,$USER_OU"
+
+pause_screen
+```
+
+}
+
+add_group() {
+
+```
+echo
+echo "Existing Groups"
+echo "---------------"
+show_groups
+
+echo
+read -rp "Group Name: " GROUPNAME
+read -rp "GID Number: " GIDNUM
+
+cat >/tmp/addgroup.ldif <<EOF
+```
+
+dn: cn=$GROUPNAME,$GROUP_OU
+objectClass: posixGroup
+cn: $GROUPNAME
+gidNumber: $GIDNUM
+EOF
+
+```
+ldapadd -x \
+  -H "$LDAP_SERVER" \
+  -D "$BIND_DN" \
+  -w "$BIND_PW" \
+  -f /tmp/addgroup.ldif
+
+rm -f /tmp/addgroup.ldif
+
+pause_screen
+```
+
+}
+
+delete_group() {
+
+```
+echo
+echo "Available Groups"
+echo "----------------"
+show_groups
+
+echo
+read -rp "Group Name to delete: " GROUPNAME
+
+ldapdelete -x \
+  -H "$LDAP_SERVER" \
+  -D "$BIND_DN" \
+  -w "$BIND_PW" \
+  "cn=$GROUPNAME,$GROUP_OU"
+
+pause_screen
+```
+
+}
+
+add_user_to_group() {
+
+```
+echo
+echo "Available Users"
+echo "---------------"
+show_users
+
+echo
+echo "Available Groups"
+echo "----------------"
+show_groups
+
+echo
+read -rp "Username: " USERNAME
+read -rp "Group Name: " GROUPNAME
+
+cat >/tmp/addmember.ldif <<EOF
+```
+
+dn: cn=$GROUPNAME,$GROUP_OU
+changetype: modify
+add: memberUid
+memberUid: $USERNAME
+EOF
+
+```
+ldapmodify -x \
+  -H "$LDAP_SERVER" \
+  -D "$BIND_DN" \
+  -w "$BIND_PW" \
+  -f /tmp/addmember.ldif
+
+rm -f /tmp/addmember.ldif
+
+pause_screen
+```
+
+}
+
+remove_user_from_group() {
+
+```
+echo
+echo "Available Users"
+echo "---------------"
+show_users
+
+echo
+echo "Available Groups"
+echo "----------------"
+show_groups
+
+echo
+read -rp "Username: " USERNAME
+read -rp "Group Name: " GROUPNAME
+
+cat >/tmp/removemember.ldif <<EOF
+```
+
+dn: cn=$GROUPNAME,$GROUP_OU
+changetype: modify
+delete: memberUid
+memberUid: $USERNAME
+EOF
+
+```
+ldapmodify -x \
+  -H "$LDAP_SERVER" \
+  -D "$BIND_DN" \
+  -w "$BIND_PW" \
+  -f /tmp/removemember.ldif
+
+rm -f /tmp/removemember.ldif
+
+pause_screen
+```
+
+}
+
+reset_password() {
+
+```
+echo
+echo "Available Users"
+echo "---------------"
+show_users
+
+echo
+read -rp "Username: " USERNAME
+
+USER_DN="uid=${USERNAME},${USER_OU}"
+
+echo
+read -s -rp "New Password: " PASSWORD
+echo
+
+ldappasswd -x \
+  -H "$LDAP_SERVER" \
+  -D "$BIND_DN" \
+  -w "$BIND_PW" \
+  -s "$PASSWORD" \
+  "$USER_DN"
+
+if [ $? -eq 0 ]; then
+    echo
+    echo "Password updated successfully."
+else
+    echo
+    echo "Failed to update password."
+fi
+
+pause_screen
+```
+
+}
+
+list_users() {
+
+```
+echo
+echo "LDAP Users"
+echo "----------"
+show_users
+
+pause_screen
+```
+
+}
+
+list_groups() {
+
+```
+echo
+echo "LDAP Groups"
+echo "-----------"
+show_groups
+
+pause_screen
+```
+
+}
+
+search_user() {
+
+```
+echo
+echo "Available Users"
+echo "---------------"
+show_users
+
+echo
+read -rp "Username: " USERNAME
+
+ldapsearch -LLL -x \
+  -H "$LDAP_SERVER" \
+  -D "$BIND_DN" \
+  -w "$BIND_PW" \
+  -b "$USER_OU" \
+  "(uid=$USERNAME)"
+
+pause_screen
+```
+
+}
+
+search_group() {
+
+```
+echo
+echo "Available Groups"
+echo "----------------"
+show_groups
+
+echo
+read -rp "Group Name: " GROUPNAME
+
+ldapsearch -LLL -x \
+  -H "$LDAP_SERVER" \
+  -D "$BIND_DN" \
+  -w "$BIND_PW" \
+  -b "$GROUP_OU" \
+  "(cn=$GROUPNAME)"
+
+pause_screen
+```
+
+}
+
+while true
+do
+clear
+
+```
+echo "======================================"
+echo "      LDAP Administration Menu"
+echo "======================================"
+echo "1  - Add User"
+echo "2  - Delete User"
+echo "3  - Add Group"
+echo "4  - Delete Group"
+echo "5  - Add User To Group"
+echo "6  - Remove User From Group"
+echo "7  - Reset User Password"
+echo "8  - List Users"
+echo "9  - List Groups"
+echo "10 - Search User"
+echo "11 - Search Group"
+echo "0  - Exit"
+echo "======================================"
+
+read -rp "Select option: " CHOICE
+
+case "$CHOICE" in
+    1) add_user ;;
+    2) delete_user ;;
+    3) add_group ;;
+    4) delete_group ;;
+    5) add_user_to_group ;;
+    6) remove_user_from_group ;;
+    7) reset_password ;;
+    8) list_users ;;
+    9) list_groups ;;
+    10) search_user ;;
+    11) search_group ;;
+    0) exit 0 ;;
+    *)
+        echo "Invalid choice"
+        sleep 2
+        ;;
+esac
+```
+
+done
+

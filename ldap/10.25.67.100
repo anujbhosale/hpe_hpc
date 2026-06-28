@@ -1,0 +1,135 @@
+---
+- name: Full LDAP SSSD Client Setup (HPC)
+  hosts: all
+  become: yes
+
+  vars:
+    ldap_uri: "ldap://10.25.67.150"
+    ldap_base_dn: "dc=hpcindia,dc=io"
+    ldap_people_ou: "ou=People,dc=hpcindia,dc=io"
+    ldap_groups_ou: "ou=Groups,dc=hpcindia,dc=io"
+    ldap_bind_dn: "cn=Directory Manager"
+    ldap_bind_password: "hpcindia!123"
+    domain_name: "hpc"
+
+  tasks:
+
+  - name: Install required packages
+    yum:
+      name:
+        - sssd
+        - sssd-ldap
+        - oddjob
+        - oddjob-mkhomedir
+        - openldap-clients
+        - authselect
+      state: present
+
+  # -------------------------
+  # NSS SWITCH CONFIGURATION
+  # -------------------------
+  - name: Configure /etc/nsswitch.conf
+    copy:
+      dest: /etc/nsswitch.conf
+      backup: yes
+      content: |
+        passwd:     files sss systemd
+        shadow:     files sss
+        group:      files sss systemd
+        sudoers:    files sss
+        netgroup:   sss files
+        hosts:      files dns
+
+  # -------------------------
+  # SSSD CONFIGURATION
+  # -------------------------
+  - name: Create sssd.conf
+    copy:
+      dest: /etc/sssd/sssd.conf
+      owner: root
+      group: root
+      mode: '0600'
+      content: |
+        [sssd]
+        services = nss, pam
+        config_file_version = 2
+        domains = {{ domain_name }}
+
+        [nss]
+        filter_groups = root
+        filter_users = root
+        entry_negative_timeout = 0
+
+        [pam]
+
+        [domain/{{ domain_name }}]
+        id_provider = ldap
+        auth_provider = ldap
+        chpass_provider = ldap
+
+        ldap_uri = {{ ldap_uri }}
+        ldap_search_base = {{ ldap_base_dn }}
+
+        ldap_user_search_base = {{ ldap_people_ou }}
+        ldap_group_search_base = {{ ldap_groups_ou }}
+
+        ldap_schema = rfc2307
+        enumerate = true
+
+        ldap_default_bind_dn = {{ ldap_bind_dn }}
+        ldap_default_authtok = {{ ldap_bind_password }}
+
+        cache_credentials = true
+        ldap_id_use_start_tls = false
+
+  # -------------------------
+  # PAM HOMEDIR CREATION
+  # -------------------------
+  - name: Enable mkhomedir
+    command: authselect enable-feature with-mkhomedir
+    ignore_errors: yes
+
+  # -------------------------
+  # SSSD CLEANUP
+  # -------------------------
+  - name: Stop SSSD
+    systemd:
+      name: sssd
+      state: stopped
+
+  - name: Clean SSSD cache
+    file:
+      path: "{{ item }}"
+      state: absent
+    loop:
+      - /var/lib/sss/db
+      - /var/lib/sss/mc
+
+  # -------------------------
+  # START SERVICES
+  # -------------------------
+  - name: Start oddjobd
+    systemd:
+      name: oddjobd
+      state: started
+      enabled: yes
+
+  - name: Start SSSD
+    systemd:
+      name: sssd
+      state: restarted
+      enabled: yes
+
+  # -------------------------
+  # VALIDATION
+  # -------------------------
+  - name: Wait for SSSD to stabilize
+    pause:
+      seconds: 5
+
+  - name: Check SSSD domain status
+    command: sssctl domain-status {{ domain_name }}
+    register: status
+
+  - debug:
+      var: status.stdout_lines

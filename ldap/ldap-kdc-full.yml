@@ -1,0 +1,270 @@
+---
+- name: Production Hardened LDAP (389-DS) + Kerberos Deployment
+  hosts: ldap_servers
+  become: true
+  gather_facts: true
+
+  vars:
+    server_hostname: "gccvmesxadserver.hpcindia.io"
+    server_ip: "10.25.67.150"
+
+    ldap_instance: "hpcindia"
+    ldap_suffix: "dc=hpcindia,dc=io"
+    ldap_root_dn: "cn=Directory Manager"
+    ldap_root_password: "hpcindia!123"
+
+    kerberos_realm: "HPCINDIA.IO"
+    kerberos_admin_password: "hpcindia!123"
+
+  tasks:
+
+  # =========================================================
+  # 1. SYSTEM SETUP
+  # =========================================================
+  - name: Set hostname
+    ansible.builtin.hostname:
+      name: "{{ server_hostname }}"
+
+  - name: Configure /etc/hosts
+    ansible.builtin.lineinfile:
+      path: /etc/hosts
+      line: "{{ server_ip }} {{ server_hostname }} gccvmesxadserver"
+      state: present
+
+  - name: Install required packages
+    ansible.builtin.dnf:
+      name:
+        - 389-ds-base
+        - openldap
+        - openldap-clients
+        - krb5-server
+        - krb5-workstation
+        - sssd
+        - sssd-ldap
+        - oddjob
+        - oddjob-mkhomedir
+        - authselect
+      state: present
+      update_cache: true
+
+  # =========================================================
+  # 2. HARD CLEANUP (CRITICAL FIX FOR YOUR ERROR)
+  # =========================================================
+  - name: Stop LDAP service if running
+    ansible.builtin.systemd:
+      name: "dirsrv@{{ ldap_instance }}"
+      state: stopped
+      enabled: false
+    ignore_errors: true
+
+  - name: Remove LDAP filesystem state
+    ansible.builtin.file:
+      path: "{{ item }}"
+      state: absent
+    loop:
+      - "/etc/dirsrv/slapd-{{ ldap_instance }}"
+      - "/var/lib/dirsrv/slapd-{{ ldap_instance }}"
+      - "/var/log/dirsrv/slapd-{{ ldap_instance }}"
+      - "/var/run/dirsrv"
+      - "/run/dirsrv"
+      - "/tmp/slapd-{{ ldap_instance }}"
+
+  - name: Clean shared memory (FIX FOR BDB PANIC)
+    ansible.builtin.shell: |
+      rm -rf /dev/shm/slapd-{{ ldap_instance }}*
+      rm -rf /dev/shm/*{{ ldap_instance }}*
+      rm -rf /dev/shm/*{{ ldap_instance }}*
+    changed_when: false
+
+  - name: Kill any stuck LDAP processes
+    ansible.builtin.shell: |
+      pkill -9 ns-slapd || true
+    ignore_errors: true
+
+  # =========================================================
+  # 3. LDAP DS CONFIG
+  # =========================================================
+  - name: Create dscreate config
+    ansible.builtin.copy:
+      dest: /tmp/dscreate.inf
+      content: |
+        [general]
+        config_version = 2
+        full_machine_name = {{ server_hostname }}
+
+        [slapd]
+        instance_name = {{ ldap_instance }}
+        root_password = {{ ldap_root_password }}
+        port = 389
+        secure_port = 636
+        self_sign_cert = True
+
+        [backend-userroot]
+        suffix = {{ ldap_suffix }}
+        create_suffix_entry = True
+
+  - name: Create 389-DS instance (retry safe)
+    ansible.builtin.command: dscreate from-file /tmp/dscreate.inf
+    register: dscreate_out
+    retries: 3
+    delay: 5
+    until: dscreate_out.rc == 0
+
+  - name: Enable and start LDAP
+    ansible.builtin.systemd:
+      name: "dirsrv@{{ ldap_instance }}"
+      enabled: true
+      state: started
+
+  - name: Wait for LDAP startup
+    ansible.builtin.pause:
+      seconds: 20
+
+  # =========================================================
+  # 4. LDAP STRUCTURE
+  # =========================================================
+  - name: Create root suffix LDIF
+    ansible.builtin.copy:
+      dest: /tmp/root.ldif
+      content: |
+        dn: {{ ldap_suffix }}
+        objectClass: top
+        objectClass: dcObject
+        objectClass: organization
+        o: HPC India
+        dc: hpcindia
+
+  - name: Add LDAP root suffix
+    ansible.builtin.shell: |
+      ldapadd -x -D "{{ ldap_root_dn }}" -w "{{ ldap_root_password }}" \
+      -H ldap://localhost -f /tmp/root.ldif
+    register: root_add
+    failed_when: false
+
+  - name: Create OU structure
+    ansible.builtin.copy:
+      dest: /tmp/base.ldif
+      content: |
+        dn: ou=People,{{ ldap_suffix }}
+        objectClass: top
+        objectClass: organizationalUnit
+        ou: People
+
+        dn: ou=Groups,{{ ldap_suffix }}
+        objectClass: top
+        objectClass: organizationalUnit
+        ou: Groups
+
+  - name: Import OU structure
+    ansible.builtin.shell: |
+      ldapadd -x -D "{{ ldap_root_dn }}" -w "{{ ldap_root_password }}" \
+      -H ldap://localhost -f /tmp/base.ldif
+    register: ou_add
+    failed_when: false
+
+  # =========================================================
+  # 5. KERBEROS CONFIGURATION
+  # =========================================================
+  - name: Configure krb5.conf
+    ansible.builtin.copy:
+      dest: /etc/krb5.conf
+      content: |
+        [libdefaults]
+          default_realm = {{ kerberos_realm }}
+          dns_lookup_realm = false
+          dns_lookup_kdc = false
+
+        [realms]
+          {{ kerberos_realm }} = {
+            kdc = {{ server_hostname }}
+            admin_server = {{ server_hostname }}
+          }
+
+        [domain_realm]
+          .hpcindia.io = {{ kerberos_realm }}
+          hpcindia.io = {{ kerberos_realm }}
+
+  - name: Create Kerberos directories
+    ansible.builtin.file:
+      path: /var/kerberos/krb5kdc
+      state: directory
+      mode: "0755"
+
+  - name: Configure kdc.conf
+    ansible.builtin.copy:
+      dest: /var/kerberos/krb5kdc/kdc.conf
+      content: |
+        [kdcdefaults]
+          kdc_ports = 88
+
+        [realms]
+          {{ kerberos_realm }} = {
+            acl_file = /var/kerberos/krb5kdc/kadm5.acl
+            admin_keytab = /var/kerberos/krb5kdc/kadm5.keytab
+            max_life = 24h
+            max_renewable_life = 7d
+          }
+
+  - name: Configure Kerberos ACL
+    ansible.builtin.copy:
+      dest: /var/kerberos/krb5kdc/kadm5.acl
+      content: |
+        */admin@{{ kerberos_realm }} *
+
+  - name: Check Kerberos DB
+    ansible.builtin.stat:
+      path: /var/kerberos/krb5kdc/principal
+    register: krbdb
+
+  - name: Create Kerberos database
+    ansible.builtin.shell: |
+      printf "%s\n%s\n" "{{ kerberos_admin_password }}" "{{ kerberos_admin_password }}" | \
+      kdb5_util create -s -r {{ kerberos_realm }}
+    when: not krbdb.stat.exists
+
+  - name: Enable and start KDC
+    ansible.builtin.systemd:
+      name: krb5kdc
+      enabled: true
+      state: started
+
+  - name: Enable and start KADMIN
+    ansible.builtin.systemd:
+      name: kadmin
+      enabled: true
+      state: started
+
+  # =========================================================
+  # 6. VALIDATION (IMPORTANT)
+  # =========================================================
+  - name: Validate LDAP suffix
+    ansible.builtin.shell: |
+      ldapsearch -x -H ldap://localhost \
+      -D "{{ ldap_root_dn }}" -w "{{ ldap_root_password }}" \
+      -b "{{ ldap_suffix }}" dn
+    register: ldap_check
+    changed_when: false
+
+  - name: Show LDAP validation
+    ansible.builtin.debug:
+      var: ldap_check.stdout_lines
+
+  - name: Validate Kerberos
+    ansible.builtin.command: kadmin.local -q "listprincs"
+    register: krb_check
+    changed_when: false
+
+  - name: Show Kerberos principals
+    ansible.builtin.debug:
+      var: krb_check.stdout_lines
+
+  # =========================================================
+  # FINAL OUTPUT
+  # =========================================================
+  - name: Deployment Summary
+    ansible.builtin.debug:
+      msg:
+        - "LDAP Instance: {{ ldap_instance }}"
+        - "LDAP Base DN: {{ ldap_suffix }}"
+        - "Kerberos Realm: {{ kerberos_realm }}"
+        - "Status: SUCCESS"

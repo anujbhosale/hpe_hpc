@@ -1,0 +1,53 @@
+
+dn: cn=grp-hpcadmins,ou=Groups,dc=hpcindia,dc=io
+changetype: modify
+add: memberUid
+memberUid: anuj
+memberUid: shrutika
+memberUid: shreyas
+memberUid: sharath
+memberUid: martand
+memberUid: gowtham
+
+dn: cn=grp-slurmusers,ou=Groups,dc=hpcindia,dc=io
+changetype: modify
+add: memberUid
+memberUid: anuj
+memberUid: shrutika
+
+dn: cn=grp-pbsusers,ou=Groups,dc=hpcindia,dc=io
+changetype: modify
+add: memberUid
+memberUid: anuj
+
+dn: cn=grp-hpcmusers,ou=Groups,dc=hpcindia,dc=io
+changetype: modify
+add: memberUid
+memberUid: anuj
+memberUid: shrutika
+memberUid: shreyas
+
+dn: cn=grp-bcmusers,ou=Groups,dc=hpcindia,dc=io
+changetype: modify
+add: memberUid
+memberUid: anuj
+memberUid: sharath
+memberUid: martand
+memberUid: gowtham
+
+dn: cn=grp-morpheususers,ou=Groups,dc=hpcindia,dc=io
+changetype: modify
+add: memberUid
+memberUid: anuj
+memberUid: shreyas
+
+dn: cn=grp-dausers,ou=Groups,dc=hpcindia,dc=io
+changetype: modify
+add: memberUid
+memberUid: anuj
+memberUid: shreyas
+
+dn: cn=grp-grafanausers,ou=Groups,dc=hpcindia,dc=io
+changetype: modify
+add: memberUid
+memberUid: anuj
