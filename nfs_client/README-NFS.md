@@ -2,9 +2,18 @@
 
 This playbook automates the installation and configuration of NFS client on Linux machines and mounts NFS shares from a remote host.
 
+Current environment:
+
+- NFS server: `10.25.67.100` (`gccvmesxnfs-store`)
+- NFS client: `10.25.67.180`
+- Mounted exports:
+  - `10.25.67.100:/home` -> `/home`
+  - `10.25.67.100:/hpcdata` -> `/hpcdata`
+
 ## Prerequisites
 
 - Ansible installed on control machine
+- `ansible.posix` collection installed for the mount module
 - SSH access to target machines
 - NFS server already set up and exporting shares
 - Sudo/root privileges on target machines
@@ -12,50 +21,75 @@ This playbook automates the installation and configuration of NFS client on Linu
 ## Files
 
 - `nfs-client-setup.yml` - Main Ansible playbook
+- `nfs-client-setup-advanced.yml` - Advanced playbook with reachability checks and retry handling
 - `inventory.ini` - Inventory file with target hosts
 - `nfs_client_vars.yml` - Variables file with configuration options
+- `requirements.yml` - Ansible collection requirements
 
 ## Quick Start
 
 ### 1. Update Inventory
 
-Edit `inventory.ini` and add your NFS client hosts and NFS server details:
+The inventory is already configured for the NFS client host `10.25.67.180`:
 
 ```ini
 [nfs_clients]
-client1 ansible_host=192.168.1.10 ansible_user=ubuntu
-client2 ansible_host=192.168.1.11 ansible_user=ubuntu
+nfs-client ansible_host=10.25.67.180 ansible_user=root
 
 [nfs_clients:vars]
-nfs_server_host=192.168.1.100
-nfs_export_path=/export/data
-nfs_mount_point=/mnt/nfs
+nfs_server_host=10.25.67.100
+nfs_mounts='[{"export_path":"/home","mount_point":"/home"},{"export_path":"/hpcdata","mount_point":"/hpcdata"}]'
+nfs_mount_options=rw,sync,hard,intr,vers=4
 ```
 
 ### 2. Configure Variables
 
-Edit `nfs_client_vars.yml` to customize:
+`nfs_client_vars.yml` contains the default NFS configuration:
+
+```yaml
+nfs_server_host: "10.25.67.100"
+nfs_mounts:
+  - export_path: "/home"
+    mount_point: "/home"
+  - export_path: "/hpcdata"
+    mount_point: "/hpcdata"
+nfs_mount_options: "rw,sync,hard,intr,vers=4"
+```
+
+Edit this file to customize:
+
 - NFS server IP/hostname
-- Export path on NFS server
-- Local mount point
+- Export paths on NFS server
+- Local mount points
 - Mount options (rw/ro, sync/async, etc.)
 
-### 3. Run the Playbook
+### 3. Install Required Ansible Collection
+
+The playbooks use `ansible.posix.mount`, so install the collection before running them:
+
+```bash
+ansible-galaxy collection install -r requirements.yml
+```
+
+### 4. Run the Playbook
 
 ```bash
 # Using inventory file
 ansible-playbook -i inventory.ini nfs-client-setup.yml
 
+# Using the advanced playbook
+ansible-playbook -i inventory.ini nfs-client-setup-advanced.yml
+
 # Using variable overrides
 ansible-playbook -i inventory.ini nfs-client-setup.yml \
-  -e "nfs_server_host=192.168.1.200" \
-  -e "nfs_mount_point=/mnt/nfs_data"
+  -e "nfs_server_host=10.25.67.100" \
+  -e 'nfs_mounts=[{"export_path":"/hpcdata","mount_point":"/hpcdata"}]'
 
 # With verbose output
 ansible-playbook -i inventory.ini nfs-client-setup.yml -v
 
 # For specific hosts
-ansible-playbook -i inventory.ini nfs-client-setup.yml -l client1
+ansible-playbook -i inventory.ini nfs-client-setup.yml -l nfs-client
 ```
 
 ## What the Playbook Does
@@ -65,9 +99,9 @@ ansible-playbook -i inventory.ini nfs-client-setup.yml -l client1
    - `nfs-common` for Debian/Ubuntu
    - `nfs-utils` for RedHat/CentOS/Fedora
 3. **Starts and enables** rpcbind service
-4. **Creates mount point** directory with proper permissions
-5. **Mounts NFS share** to specified mount point
-6. **Verifies the mount** and displays mount information
+4. **Creates mount point** directories with proper permissions
+5. **Mounts NFS shares** to the specified mount points
+6. **Verifies the mounts** and displays mount information
 
 ## Supported Linux Distributions
 
@@ -120,18 +154,18 @@ ansible-playbook -i inventory.ini nfs-client-setup.yml \
 ### Verify NFS mount on client
 ```bash
 # Check mount status
-df -h | grep nfs
+df -Th /home /hpcdata
 
 # List mounted shares
 mount | grep nfs
 
 # Test file operations
-touch /mnt/nfs/test.txt
+touch /hpcdata/ansible_nfs_test.txt
 ```
 
 ## Permanent Mount
 
-The playbook uses `state: mounted` which adds the mount to `/etc/fstab`, making it permanent across reboots.
+The playbook uses `state: mounted` which mounts the shares and adds them to `/etc/fstab`, making them permanent across reboots.
 
 ## Unmount NFS Share (Manual)
 
@@ -142,7 +176,8 @@ ansible-playbook -i inventory.ini nfs-client-setup.yml \
 
 Or manually on each client:
 ```bash
-umount /mnt/nfs
+umount /home
+umount /hpcdata
 ```
 
 ## References

@@ -65,7 +65,7 @@
       loop: "{{ configured_nfs_mounts }}"
 
     - name: Mount NFS shares
-      mount:
+      ansible.posix.mount:
         path: "{{ item.mount_point }}"
         src: "{{ nfs_server_host }}:{{ item.export_path }}"
         fstype: nfs
