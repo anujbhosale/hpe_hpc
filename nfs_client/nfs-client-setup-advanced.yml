@@ -2,12 +2,15 @@
 - name: Install and configure NFS client (Advanced)
   hosts: all
   become: yes
+  vars_files:
+    - nfs_client_vars.yml
   vars:
-    nfs_server_host: "192.168.1.100"
-    nfs_export_path: "/export/data"
-    nfs_mount_point: "/mnt/nfs"
+    nfs_server_host: "10.25.67.100"
+    nfs_export_path: "/hpcdata"
+    nfs_mount_point: "/hpcdata"
     nfs_mount_options: "rw,sync,hard,intr"
     configure_firewall: false
+    configured_nfs_mounts: "{{ nfs_mounts | default([{'export_path': nfs_export_path, 'mount_point': nfs_mount_point}]) }}"
 
   pre_tasks:
     - name: Validate NFS server is reachable
@@ -65,23 +68,25 @@
         daemon_reload: yes
       tags: services
 
-    - name: Create mount point directory
+    - name: Create mount point directories
       file:
-        path: "{{ nfs_mount_point }}"
+        path: "{{ item.mount_point }}"
         state: directory
         mode: '0755'
         owner: root
         group: root
+      loop: "{{ configured_nfs_mounts }}"
       tags: mount
 
-    - name: Mount NFS share
+    - name: Mount NFS shares
       mount:
-        path: "{{ nfs_mount_point }}"
-        src: "{{ nfs_server_host }}:{{ nfs_export_path }}"
+        path: "{{ item.mount_point }}"
+        src: "{{ nfs_server_host }}:{{ item.export_path }}"
         fstype: nfs
         opts: "{{ nfs_mount_options }}"
         state: mounted
       register: mount_result
+      loop: "{{ configured_nfs_mounts }}"
       tags: mount
       ignore_errors: yes
 
@@ -105,11 +110,12 @@
 
         - name: Retry NFS mount
           mount:
-            path: "{{ nfs_mount_point }}"
-            src: "{{ nfs_server_host }}:{{ nfs_export_path }}"
+            path: "{{ item.mount_point }}"
+            src: "{{ nfs_server_host }}:{{ item.export_path }}"
             fstype: nfs
             opts: "{{ nfs_mount_options }}"
             state: mounted
+          loop: "{{ configured_nfs_mounts }}"
       when: mount_result is failed
       tags: mount
 
@@ -127,26 +133,28 @@
       when: configure_firewall and ansible_os_family in ["RedHat", "Fedora"]
       tags: firewall
 
-    - name: Verify NFS mount
-      command: "df -h {{ nfs_mount_point }}"
+    - name: Verify NFS mounts
+      command: "df -h {{ item.mount_point }}"
       register: mount_verify
       changed_when: false
+      loop: "{{ configured_nfs_mounts }}"
       tags: verify
 
     - name: Display mount status
       debug:
         msg: |
           NFS Mount Verification:
-          {{ mount_verify.stdout }}
+            {{ mount_verify.results | map(attribute='stdout') | list }}
       tags: verify
 
     - name: Test NFS write permissions
       block:
         - name: Create test file on NFS share
           file:
-            path: "{{ nfs_mount_point }}/ansible_test_{{ ansible_date_time.iso8601_basic }}"
+            path: "{{ item.mount_point }}/ansible_test_{{ ansible_date_time.iso8601_basic }}"
             state: touch
           register: test_write
+          loop: "{{ configured_nfs_mounts }}"
 
         - name: Verify test file
           stat:
@@ -166,8 +174,7 @@
         msg: |
           NFS Client Installation Complete!
           Server: {{ nfs_server_host }}
-          Export: {{ nfs_export_path }}
-          Mount Point: {{ nfs_mount_point }}
+          Mounts: {{ configured_nfs_mounts }}
           Mount Options: {{ nfs_mount_options }}
 
   handlers:

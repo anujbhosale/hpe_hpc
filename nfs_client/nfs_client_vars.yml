@@ -2,13 +2,20 @@
 # Default NFS client configuration variables
 
 # NFS Server configuration
-nfs_server_host: "192.168.1.100"
-nfs_export_path: "/export/data"
+nfs_server_host: "10.25.67.100"
+nfs_export_path: "/hpcdata"
 
 # Local mount configuration
-nfs_mount_point: "/mnt/nfs"
+nfs_mount_point: "/hpcdata"
 nfs_mount_uid: 1000
 nfs_mount_gid: 1000
+
+# NFS exports to mount from gccvmesxnfs-store (10.25.67.100)
+nfs_mounts:
+  - export_path: "/home"
+    mount_point: "/home"
+  - export_path: "/hpcdata"
+    mount_point: "/hpcdata"
 
 # NFS mount options
 # Common options:
@@ -20,7 +27,7 @@ nfs_mount_gid: 1000
 # - soft: soft mount (retry limited times)
 # - intr: allow interruption of NFS calls
 # - nolock: disable file locking
-nfs_mount_options: "rw,sync,hard,intr"
+nfs_mount_options: "rw,sync,hard,intr,vers=4"
 
 # Set to true to ensure NFS utilities are installed and running
 ensure_nfs_running: true

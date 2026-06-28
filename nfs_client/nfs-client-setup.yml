@@ -2,11 +2,14 @@
 - name: Install and configure NFS client
   hosts: all
   become: yes
+  vars_files:
+    - nfs_client_vars.yml
   vars:
-    nfs_server_host: "192.168.1.100"  # Change to your NFS server IP
-    nfs_export_path: "/export/data"    # NFS export path on server
-    nfs_mount_point: "/mnt/nfs"        # Local mount point
+    nfs_server_host: "10.25.67.100"   # NFS server IP
+    nfs_export_path: "/hpcdata"        # Fallback single NFS export path on server
+    nfs_mount_point: "/hpcdata"        # Fallback single local mount point
     nfs_mount_options: "rw,sync,hard,intr"
+    configured_nfs_mounts: "{{ nfs_mounts | default([{'export_path': nfs_export_path, 'mount_point': nfs_mount_point}]) }}"
 
   tasks:
     - name: Update package cache (Debian/Ubuntu)
@@ -54,25 +57,28 @@
         - rpcbind
       when: ansible_os_family == "Fedora"
 
-    - name: Create mount point directory
+    - name: Create mount point directories
       file:
-        path: "{{ nfs_mount_point }}"
+        path: "{{ item.mount_point }}"
         state: directory
         mode: '0755'
+      loop: "{{ configured_nfs_mounts }}"
 
-    - name: Mount NFS share
+    - name: Mount NFS shares
       mount:
-        path: "{{ nfs_mount_point }}"
-        src: "{{ nfs_server_host }}:{{ nfs_export_path }}"
+        path: "{{ item.mount_point }}"
+        src: "{{ nfs_server_host }}:{{ item.export_path }}"
         fstype: nfs
         opts: "{{ nfs_mount_options }}"
         state: mounted
+      loop: "{{ configured_nfs_mounts }}"
 
-    - name: Verify NFS mount
-      command: "df -h {{ nfs_mount_point }}"
+    - name: Verify NFS mounts
+      command: "df -h {{ item.mount_point }}"
       register: mount_result
       changed_when: false
+      loop: "{{ configured_nfs_mounts }}"
 
     - name: Display mount information
       debug:
-        msg: "{{ mount_result.stdout_lines }}"
+        msg: "{{ mount_result.results | map(attribute='stdout_lines') | list }}"
