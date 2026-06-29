@@ -27,7 +27,7 @@ cleanup() {
     fi
 
     if [[ -d "$WORKDIR" ]]; then
-#        rm -rf "$WORKDIR"
+        rm -rf "$WORKDIR"
         echo "Deleted cloned repo: $WORKDIR"
     fi
 

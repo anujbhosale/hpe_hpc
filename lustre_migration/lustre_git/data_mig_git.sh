@@ -28,6 +28,13 @@ fi
 
 mkdir -p "$DEST"
 
+rm -rf "$DEST/.rsync-partial" 2>/dev/null
+
+find "$DEST" \
+  -type f \
+  -regex '.*\.[A-Za-z0-9]\{6\}$' \
+  -delete 2>/dev/null
+
 # -----------------------------------------------------------------------------
 # Logging
 # -----------------------------------------------------------------------------
@@ -131,8 +138,10 @@ copy_item() {
 
     for retry in 1 2 3; do
 
-        rsync -aHAX --partial --append-verify \
+        rsync -aHAX --delete \
+	    --numeric-ids \
             --info=progress2 \
+            --stats \
             "$ITEM" "$DEST"/ >> "$LOGFILE" 2>&1
 
         STATUS=$?
